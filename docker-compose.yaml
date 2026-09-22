@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  postgres:
+    image: 'postgres:16'
+    environment: 
+      POSTGRES_USER: 'Afshan525'
+      POSTGRES_PASSWORD: 'Afshan123'
+      POSTGRES_DB: 'payments-db'
+    ports:
+      - "5434:5432"
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c random_page_cost=1.1
+      -c log_statement=all
+      -c log_min_duration_statement=100
+      -c max_connections=200
+    shm_size: 1gb
+    volumes:
+      - ./scripts:/docker-entrypoint-initdb.d:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U Afshan525 -d pulse-Queue"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
