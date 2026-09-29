@@ -1,0 +1,11 @@
+# local env / secrets
+.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go build artifacts
+*.exe
+*.test
+*.out
