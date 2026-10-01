@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"strings"
 	"time"
@@ -82,27 +83,45 @@ func accountHandler(w http.ResponseWriter, r *http.Request) {
 
 // our fucntion for calling the bank service to charge the customer
 func callBankservice(ctx context.Context, referenceID string, amountCents int64) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	body := fmt.Sprintf(`{"reference_id":"%s","amount_cents":%d}`, referenceID, amountCents)
-	// resp, err := http.Post("http://localhost:9090/bank", "application/json", strings.NewReader(body))
-	// for attaching context with the request i am using http.NewRequestWithContext instead of http.Post
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:9090/bank", strings.NewReader(body))
-	if err != nil {
-		return "", err
+
+	var lastErr error
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, "http://localhost:9091/bank", strings.NewReader(body))
+		if err != nil {
+			cancel()
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		cancel()
+
+		if err == nil {
+			defer resp.Body.Close()
+			var bankResp BankResponse
+			decodeErr := json.NewDecoder(resp.Body).Decode(&bankResp)
+			if decodeErr != nil {
+				return "", decodeErr
+			}
+			return bankResp.Result, nil
+		}
+
+		// no answer this time.... so we will remember the error and try again unless this was the last attempt which is the 3rd one
+		lastErr = err
+		log.Printf("bank call attempt %d failed: %v", attempt, err)
+
+		if attempt < 3 {
+			jitter := time.Duration(rand.Intn(300)) * time.Millisecond
+			wait := 200*time.Millisecond + jitter
+			time.Sleep(wait)
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	var bankResp BankResponse
-	err = json.NewDecoder(resp.Body).Decode(&bankResp)
-	if err != nil {
-		return "", err
-	}
-	return bankResp.Result, nil
+
+	return "", lastErr
 }
 
 // our fucntion for handling the charge request
