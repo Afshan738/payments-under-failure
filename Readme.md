@@ -20,9 +20,9 @@ payment the bank never answers is marked `unknown`, never guessed at.
 - All three terminal outcomes handled and verified against the live
   database: `succeeded` (ledger written, entries sum to zero), `failed`
   (no ledger), `unknown` (no ledger, never hangs)
-
-Still to build: retries before giving up on the bank, the background
-checker that resolves `unknown` payments, crash tests, load testing.
+- Retries handler before giving up on the bank is done
+  Still to build: the background
+  checker that resolves `unknown` payments, crash tests, load testing.
 
 ## Running locally
 
