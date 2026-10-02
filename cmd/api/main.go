@@ -87,8 +87,8 @@ func callBankservice(ctx context.Context, referenceID string, amountCents int64)
 
 	var lastErr error
 
-	for attempt := 1; attempt <= 3; attempt++ {
-		attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	for attempt := 1; attempt <= 2; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 700*time.Second)
 
 		req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, "http://localhost:9091/bank", strings.NewReader(body))
 		if err != nil {
@@ -115,8 +115,8 @@ func callBankservice(ctx context.Context, referenceID string, amountCents int64)
 		log.Printf("bank call attempt %d failed: %v", attempt, err)
 
 		if attempt < 3 {
-			jitter := time.Duration(rand.Intn(300)) * time.Millisecond
-			wait := 200*time.Millisecond + jitter
+			jitter := time.Duration(rand.Intn(50)) * time.Millisecond
+			wait := 50*time.Millisecond + jitter
 			time.Sleep(wait)
 		}
 	}
