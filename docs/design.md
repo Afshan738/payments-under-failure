@@ -1,4 +1,4 @@
-# Payment Processor Simulation — Design Doc
+# Payment Processor Simulation, Design Doc
 
 Author: Afshan Qasim
 Status: partially implemented. Where this doc and the code differ, the
