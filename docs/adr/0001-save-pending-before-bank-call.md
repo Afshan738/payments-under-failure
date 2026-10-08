@@ -1,7 +1,5 @@
 # 0001: Save the payment as pending before calling the bank
 
-Status: accepted
-Date: 2026-09-20
 
 ## Context
 
