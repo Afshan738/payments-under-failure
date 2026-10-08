@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,6 +19,9 @@ type StatusResponse struct {
 	Result    string `json:"result"`
 }
 
+// for those payments which bank charged and stored the response in the map (i mean we can consider map as a bank database)
+// but before seding us response back api crashed and we neve recieved the response of the charged payments
+// so that is y checker at the background will check the status of those payments and update the status of those payments in the database
 func checkBankStatus(referenceID string) (string, error) {
 	body := fmt.Sprintf(`{"reference_id":"%s"}`, referenceID)
 
@@ -35,10 +40,45 @@ func checkBankStatus(referenceID string) (string, error) {
 	return statusResp.Result, nil
 }
 
+//	the purpose of this function is that for those payments which map has no record this means those payments never touched the bank
+//
+// and we will  let checker to charge those payments again and check the status of those payments after charging them.
+// This is to neccessary to implement becasue as when we have saved payment as pending and after saving when the time for bank call
+// come then our server got crashed and payemnt just left as pending so bg checker will try to reolve those ......
+func checkBankCharge(referenceID string, amountCents int64) (string, error) {
+	body := fmt.Sprintf(`{"reference_id":"%s","amount_cents":%d}`, referenceID, amountCents)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://localhost:9091/bank", strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var bankResp StatusResponse
+	err = json.NewDecoder(resp.Body).Decode(&bankResp)
+	if err != nil {
+		return "", err
+	}
+
+	return bankResp.Result, nil
+}
+
 func main() {
 	// making a connection to the database using the pgx library
 	ctx := context.Background()
-	ConStr := "postgres://Afshan525:Afshan123@localhost:5434/payments-db"
+	ConStr := os.Getenv("DATABASE_URL")
+	if ConStr == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
 	conn, err := pgxpool.New(ctx, ConStr)
 	if err != nil {
 		log.Fatalf("DB ERROR: %v", err)
@@ -46,7 +86,11 @@ func main() {
 	defer conn.Close()
 
 	count := 0
-
+	// in this specific query i am making sure that checker does not have conflict with those payments which r being processed by a live api for the first time
+	// so we set the time that just pick those payments which r at least thirty seconds old which will make sure it is not the first time being processed payment
+	// becasue we want checker to pick those pending payments which r not updated due to crash not those which r being processed for the first time
+	// also we r picking unknown payments for which we retried but did not got answer due to glicth of bank even after retrying
+	// and when bg checker will check the status and will still not response or no record than we will increase the checked_count and if checked_count is more than 3 than we will send those payments to human review
 	rows, err := conn.Query(ctx, `SELECT id, status, amount_cents, customer_id, merchant_id FROM payments
 WHERE under_review = false
   AND (status='unknown' OR (status='pending' AND updated_at < now() - interval '30 seconds'))`)
@@ -54,7 +98,6 @@ WHERE under_review = false
 		log.Fatalf("query failed: %v", err)
 	}
 	defer rows.Close()
-
 	for rows.Next() {
 		var id, status, customerID, merchantID string
 		var amountCents int64
@@ -71,7 +114,19 @@ WHERE under_review = false
 			continue
 		}
 		log.Printf("bank says payment %s is: %s", id, result)
-
+		// no record means that payment never reached the bank
+		if result == "no_record" {
+			log.Printf("payment %s never reached the bank, attempting charge now", id)
+			result, err = checkBankCharge(id, amountCents)
+			if err != nil {
+				log.Printf("could not charge payment %s: %v", id, err)
+				continue
+			}
+			log.Printf("bank now says payment %s is: %s", id, result)
+		}
+		// if payment is succeeded than this mean we have to make sure an atomic transaction will be done
+		// this means that we will update the payment status to succeeded and also we will create ledger
+		// entries for customer, merchant and fee account in a single transaction
 		if result == "succeeded" {
 			tx, err := conn.Begin(ctx)
 			if err != nil {
@@ -89,6 +144,7 @@ WHERE under_review = false
 				tx.Rollback(ctx)
 				continue
 			}
+			// in this calculation we are taking 3% fee from the total amount and giving the rest to the merchant
 			feeAccountID := "e4c75aa7-a8d5-4f50-a4c9-3d6f4dffa01d"
 			feeCents := amountCents * 3 / 100
 			merchantCents := amountCents - feeCents
