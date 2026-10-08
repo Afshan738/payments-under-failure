@@ -7,14 +7,16 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var conn *pgx.Conn
+var conn *pgxpool.Pool
 
 type ChargeRequest struct {
 	MerchantID     string `json:"merchant_id"`
@@ -88,7 +90,7 @@ func callBankservice(ctx context.Context, referenceID string, amountCents int64)
 	var lastErr error
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		attemptCtx, cancel := context.WithTimeout(ctx, 700*time.Second)
+		attemptCtx, cancel := context.WithTimeout(ctx, 700*time.Millisecond)
 
 		req, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, "http://localhost:9091/bank", strings.NewReader(body))
 		if err != nil {
@@ -110,11 +112,11 @@ func callBankservice(ctx context.Context, referenceID string, amountCents int64)
 			return bankResp.Result, nil
 		}
 
-		// no answer this time.... so we will remember the error and try again unless this was the last attempt which is the 3rd one
+		// no answer this time.... so we will remember the error and try again unless this was the last attempt which is the 2nd one
 		lastErr = err
 		log.Printf("bank call attempt %d failed: %v", attempt, err)
 
-		if attempt < 3 {
+		if attempt < 2 {
 			jitter := time.Duration(rand.Intn(50)) * time.Millisecond
 			wait := 50*time.Millisecond + jitter
 			time.Sleep(wait)
@@ -132,7 +134,7 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
+	start := time.Now()
 	paymentID := uuid.New().String()
 	var savedID string
 	err = conn.QueryRow(r.Context(),
@@ -144,6 +146,10 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&savedID)
 
 	if err == nil {
+		if strings.HasPrefix(req.IdempotencyKey, "crash-test-") {
+			log.Println("SIMULATING CRASH after pending save, payment:", savedID)
+			os.Exit(1)
+		}
 		result, bankErr := callBankservice(r.Context(), savedID, req.AmountCents)
 		if bankErr != nil {
 			log.Println("BANK SERVICE ERROR:", bankErr)
@@ -156,7 +162,7 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 			if updateErr != nil {
 				log.Println("DB ERROR:", updateErr)
 			}
-
+			log.Printf("chargeHandler total duration: %v", time.Since(start))
 			fmt.Fprintf(w, `{"payment_id": "%s", "amount_cents": %d, "status": "unknown"}`, savedID, req.AmountCents)
 			return
 		}
@@ -208,6 +214,7 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			log.Printf("chargeHandler total duration: %v", time.Since(start))
 			fmt.Fprintf(w, `{"payment_id": "%s", "amount_cents": %d, "status": "succeeded"}`, savedID, req.AmountCents)
 			return
 		}
@@ -222,6 +229,7 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "could not finalize payment", http.StatusInternalServerError)
 				return
 			}
+			log.Printf("chargeHandler total duration: %v", time.Since(start))
 			fmt.Fprintf(w, `{"payment_id": "%s", "amount_cents": %d, "status": "failed"}`, savedID, req.AmountCents)
 			return
 		}
@@ -249,19 +257,29 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "amount mismatch", http.StatusConflict)
 		return
 	}
+	log.Printf("chargeHandler total duration: %v", time.Since(start))
 	fmt.Fprintf(w, `{"payment_id": "%s", "status": "%s", "amount_cents": %d}`, existingPaymentID, existingStatus, existingAmountCents)
 }
 
 func main() {
 	ctx := context.Background()
 	var err error
-	ConStr := "postgres://Afshan525:Afshan123@localhost:5434/payments-db"
-	conn, err = pgx.Connect(ctx, ConStr)
+	ConStr := os.Getenv("DATABASE_URL")
+	if ConStr == "" {
+		log.Fatal("DATABASE_URL environment variable is not set")
+	}
+	// using a connection pool for concurrency test
+	// bcz throwing the 1000 req at the same time will break just using a single connection so we will use a connection pool to handle the concurrency
+	// one point i observed here is that even i sued connection pool but latency started increasing which was due to the connection pool ..
+	// due to which os has to do alot of context switching which spiked our latency
+	// so hence proved that concurrency is not free it cost latency
+
+	conn, err = pgxpool.New(ctx, ConStr)
 	if err != nil {
 		log.Fatalf("Unable to connect to database: %v\n", err)
 		return
 	}
-	defer conn.Close(ctx)
+	defer conn.Close()
 	http.HandleFunc("/account", accountHandler)
 	http.HandleFunc("/charge", chargeHandler)
 	log.Println("Server is running on port 8080...")
