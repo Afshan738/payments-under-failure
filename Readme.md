@@ -54,7 +54,8 @@ not simulated yet. See "Deliberately not built" below.
 
 ## Architecture
 
-![Architecture diagram](docs/Architecture-Diagram.png)
+<img width="883" height="565" alt="image" src="https://github.com/user-attachments/assets/32b848f1-0bd9-4cb7-9543-e691915c3b97" />
+
 
 ## Failure scenarios handled
 
