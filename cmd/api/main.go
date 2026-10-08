@@ -146,10 +146,11 @@ func chargeHandler(w http.ResponseWriter, r *http.Request) {
 	).Scan(&savedID)
 
 	if err == nil {
-		if strings.HasPrefix(req.IdempotencyKey, "crash-test-") {
-			log.Println("SIMULATING CRASH after pending save, payment:", savedID)
-			os.Exit(1)
-		}
+		// Anyone can uncomment this to simulate a crash after saving the payment as pending but before calling the bank service.
+		// if strings.HasPrefix(req.IdempotencyKey, "crash-test-") {
+		// 	log.Println("SIMULATING CRASH after pending save, payment:", savedID)
+		// 	os.Exit(1)
+		// }
 		result, bankErr := callBankservice(r.Context(), savedID, req.AmountCents)
 		if bankErr != nil {
 			log.Println("BANK SERVICE ERROR:", bankErr)
