@@ -1,4 +1,4 @@
--- Money is always a whole number of cents. Never use decimals for money.
+-- Money is always a whole number of cents. we never use decimals for money.
 -- One currency only, to keep the project small.
 
 CREATE TABLE accounts (
@@ -47,7 +47,7 @@ CREATE TABLE ledger_entries (
 INSERT INTO accounts (id, account_type, label)
 VALUES (gen_random_uuid(), 'fee', 'Processor Fee');
 
--- Safety check. This must ALWAYS return zero rows.
+-- This must ALWAYS return zero rows.
 -- Every payment's ledger entries must add up to zero.
 --
 -- SELECT payment_id, SUM(amount_cents)
